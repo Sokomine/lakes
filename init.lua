@@ -423,6 +423,10 @@ lakes.lake_shore_one_node = function( pos, pos_done )
 	-- does not look good if papyrus or other plants apart from bushes sit on snow
 	local n_below = minetest.get_node({x=pos.x, y=pos.y, z=pos.z});
 	r = math.random(4);
+	-- no point in placing plants on ice...
+	if( not(n_below) or n_below.name=="default:ice") then
+		return;
+	end
 	-- bushes to be placed using functions and place_schematic
 	if(r==1) then
 		local fun = lakes.around_lake_decorations[math.random(1,#lakes.around_lake_decorations)];
