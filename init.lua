@@ -1,4 +1,31 @@
 
+lakes = {}
+
+-- plant these plants around lakes
+lakes.plants_around_lakes = {
+	"default:grass_5", "default:grass_5", "default:grass_5",
+	"default:grass_4", "default:grass_4", "default:grass_3",
+	"default:grass_2", "default:grass_1", "default:grass_5",
+	"default:grass_5", "default:grass_5", "default:grass_5",
+	"default:grass_4", "default:grass_4", "default:grass_3",
+	"default:grass_2", "default:grass_1", "default:grass_5",
+	"default:fern_1", "default:fern_2", "default:fern_3",
+	"default:marram_grass_1", "default:marram_grass_2", "default:marram_grass_3",
+	}
+
+
+lakes.around_lake_decorations = {
+	default.grow_bush,
+	default.grow_bush,
+	default.grow_blueberry_bush,
+	default.grow_blueberry_bush,
+	default.grow_blueberry_bush,
+	default.grow_acacia_bush,
+	default.grow_pine_bush,
+	default.grow_large_catus,
+	}
+
+
 local fill_lake_with = "default:river_water_source";
 
 -- helper function for mark_min_max_height_in_mapchunk(..)
@@ -373,6 +400,68 @@ local heightmap_with_hills_lowered_and_holes_filled = function( minp, maxp, heig
 end
 
 
+lakes.lake_shore = function(shore_nodes)
+	pos_done = {};
+	for pos, val in pairs(shore_nodes) do
+		lakes.lake_shore_one_node( pos, pos_done );
+	end
+end
+
+lakes.lake_shore_one_node = function( pos, pos_done )
+	-- lake shores may be detected multiple times, and bushes need
+	-- more space around them; do not place something if the room
+	-- might already be taken
+	if(pos_done[ minetest.pos_to_string(pos)]) then
+		return;
+	end
+	-- only place something if there is room (on the original map; placed
+	-- schematics and nodes are not detected this way)
+	local n = minetest.get_node({x=pos.x, y=pos.y+1, z=pos.z});
+	if( n and n.name and n.name~="air") then
+		return;
+	end
+	-- does not look good if papyrus or other plants apart from bushes sit on snow
+	local n_below = minetest.get_node({x=pos.x, y=pos.y, z=pos.z});
+	r = math.random(4);
+	-- bushes to be placed using functions and place_schematic
+	if(r==1) then
+		local fun = lakes.around_lake_decorations[math.random(1,#lakes.around_lake_decorations)];
+		if( fun ) then
+			if(fun ~= default.grow_pine_bush and (not(n_below) or n_below.name=="default:snowblock" or n_below.name=="default:dirt_with_snow")) then
+				-- only allow pine trees in winter biomes
+			else
+				fun({x=pos.x, y=pos.y+1, z=pos.z});
+			end
+			for x=pos.x-1, pos.x+1 do
+			for z=pos.z-1, pos.z+1 do
+				pos_done[ minetest.pos_to_string( {x=x, z=z, y=pos.y} )] = 1;
+			end
+			end
+			return;
+		end
+	end
+
+	if(not(n_below) or n_below.name=="default:snowblock" or n_below.name=="default:dirt_with_snow") then
+		return;
+	end
+
+	-- papyrus is very decorative; use it plentifully
+	if(r==2) then
+		for i=pos.y+1, pos.y+4 do
+			minetest.set_node({x=pos.x, y=i, z=pos.z}, {name="default:papyrus"});
+		end
+
+	-- other plants are just one node high
+	else
+		local plant = lakes.plants_around_lakes[math.random(1,#lakes.plants_around_lakes)];
+		if(minetest.registered_nodes[plant]) then
+			minetest.set_node({x=pos.x, y=pos.y+1, z=pos.z}, {name=plant});
+		end
+	end
+	pos_done[ minetest.pos_to_string( pos )] = 1;
+end
+
+
 minetest.register_on_generated(function(minp, maxp, seed)
 
 	local heightmap = minetest.get_mapgen_object('heightmap');
@@ -382,6 +471,7 @@ minetest.register_on_generated(function(minp, maxp, seed)
 		return;
 	end
 
+
 	-- do the actual work of hill and hole detection
 	local t1 = minetest.get_us_time();
 	-- find places where the land could be lowered or raised
@@ -390,8 +480,6 @@ minetest.register_on_generated(function(minp, maxp, seed)
 	local detected = mark_holes_and_hills_in_mapchunk( minp, maxp, heightmap, extrema.minheight, extrema.maxheight);
 	-- flatten hills, fill holes (just virutal in adjusted_heightmap)
 	local adjusted_heightmap = heightmap_with_hills_lowered_and_holes_filled( minp, maxp, heightmap, extrema, detected);
-	local t2 = minetest.get_us_time();
-	print("Time elapsed: "..tostring( t2-t1 ));
 
 
 
@@ -401,6 +489,7 @@ minetest.register_on_generated(function(minp, maxp, seed)
 	end
 
 	-- show something to the user; change the landscape
+	local shore_nodes = {};
 	local i = 0
 	for az=minp.z,maxp.z do
 	for ax=minp.x,maxp.x do
@@ -410,8 +499,65 @@ minetest.register_on_generated(function(minp, maxp, seed)
 		if( detected.holes_markmap[i] and detected.holes_markmap[i]>0) then
 			local id = detected.holes_merge_into[ detected.holes_markmap[i] ];
 			local hole = detected.holes.merged[id];
+
+
+			-- is there a node *above* the future surface of the lake?
+			-- this might be a tree with leaves, fruits and/or snow on it
+			local n = minetest.get_node({x=ax, z=az, y=hole.target_height+1});
+			if( n and n.name and n.name ~= "ignore" and n.name ~= "air") then
+				local remove = minetest.find_nodes_in_area(
+						{x=ax-3, y=heightmap[i],    z=az-3},
+						{x=ax+3, y=heightmap[i]+16, z=az+3},
+						-- tree trunks. leaves and tree fruits
+						{"group:tree", "group:leaves", "default:apple",
+						-- snow on pines has to go as well
+						"default:snow"});
+				for nr, pos in ipairs(remove) do
+					minetest.set_node( pos, {name = "air"}); --"default:obsidian_glass"});
+				end
+			end
+
+			-- clay is a nice building material; we need more of it!
+			-- thus: turn the ground of the lake into clay
+			minetest.set_node( {x=ax, z=az, y=heightmap[i]}, {name="default:clay"});
+
+			-- is there a node above the *ground*? (most likely a plant)
+			-- this is only of intrest if the node will not be replaced anyway (that is,
+			-- the node is not at the lakes surface)
+			if(heightmap[i] < hole.target_height-1) then
+				local n = minetest.get_node({x=ax, z=az, y=heightmap[i]+1});
+				if( n and n.name and n.name ~= "ignore" and n.name ~= "air") then
+					minetest.set_node( {x=ax, z=az, y=heightmap[i]+1}, {name=hole.material});
+				end
+			end
+			-- place the fill material at the new surface height of the lake
 			minetest.set_node( {x=ax, z=az, y=hole.target_height}, {name=hole.material});
+
+			-- waterlilys are decorative
+			if(minetest.registered_nodes["flowers:waterlily"] and math.random(1,20)==1) then
+				minetest.set_node( {x=ax, z=az, y=hole.target_height+1}, {name="flowers:waterlily"});
+			end
+
+			-- use the inices of a table to store the positions in order to avoid duplicates
+			if( heightmap[i-1] and heightmap[i-1]==hole.target_height) then
+				shore_nodes[ {x=ax-1, z=az, y=hole.target_height} ] = 1;
+			end
+			if( heightmap[i+1] and heightmap[i+1]==hole.target_height) then
+				shore_nodes[ {x=ax+1, z=az, y=hole.target_height} ] = 1;
+			end
+			if( heightmap[i-chunksize] and heightmap[i-chunksize]==hole.target_height) then
+				shore_nodes[ {x=ax, z=az-1, y=hole.target_height} ] = 1;
+			end
+			if( heightmap[i+chunksize] and heightmap[i+chunksize]==hole.target_height) then
+				shore_nodes[ {x=ax, z=az+1, y=hole.target_height} ] = 1;
+			end
 		end
 	end
 	end
+
+	-- place plants around the lake (they grow better with the water...)
+	lakes.lake_shore(shore_nodes);
+
+	local t3 = minetest.get_us_time();
+	print("Time elapsed: "..tostring( t3-t1 ));
 end)
