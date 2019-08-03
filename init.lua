@@ -511,11 +511,11 @@ minetest.register_on_generated(function(minp, maxp, seed)
 			if( n and n.name and n.name ~= "ignore" and n.name ~= "air") then
 				local remove = minetest.find_nodes_in_area(
 						{x=ax-3, y=heightmap[i],    z=az-3},
-						{x=ax+3, y=heightmap[i]+16, z=az+3},
+						{x=ax+3, y=heightmap[i]+18, z=az+3},
 						-- tree trunks. leaves and tree fruits
 						{"group:tree", "group:leaves", "default:apple",
 						-- snow on pines has to go as well
-						"default:snow"});
+						"default:snow", "default:snowblock"});
 				for nr, pos in ipairs(remove) do
 					minetest.set_node( pos, {name = "air"}); --"default:obsidian_glass"});
 				end
