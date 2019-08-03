@@ -1,6 +1,8 @@
 
 lakes = {}
 
+lakes.ground_material = "default:clay";
+
 -- plant these plants around lakes
 lakes.plants_around_lakes = {
 	"default:grass_5", "default:grass_5", "default:grass_5",
@@ -523,7 +525,7 @@ minetest.register_on_generated(function(minp, maxp, seed)
 
 			-- clay is a nice building material; we need more of it!
 			-- thus: turn the ground of the lake into clay
-			minetest.set_node( {x=ax, z=az, y=heightmap[i]}, {name="default:clay"});
+			minetest.set_node( {x=ax, z=az, y=heightmap[i]}, {name=lakes.ground_material});
 
 			-- is there a node above the *ground*? (most likely a plant)
 			-- this is only of intrest if the node will not be replaced anyway (that is,
