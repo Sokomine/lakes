@@ -3,6 +3,16 @@ lakes = {}
 
 lakes.ground_material = "default:clay";
 
+lakes.fill_lake_with = "default:river_water_source";
+
+-- do not generate lakes...
+--   ...less than this deep
+lakes.min_depth = 1
+--   ...with less square meters surface than this value
+lakes.min_surface_area = 9
+--   ...with a volume less than this value
+lakes.min_volume = 18
+
 -- plant these plants around lakes
 lakes.plants_around_lakes = {
 	"default:grass_5", "default:grass_5", "default:grass_5",
@@ -28,7 +38,6 @@ lakes.around_lake_decorations = {
 	}
 
 
-local fill_lake_with = "default:river_water_source";
 
 -- helper function for mark_min_max_height_in_mapchunk(..)
 -- math_extrema: math.min for maxheight; math.max for minheight
@@ -216,13 +225,13 @@ local identify_individual_holes_or_hills = function( minp, maxp, ax, az, i, chun
 				minp = {x=ax, z=az, y=math.min(h_max, h_real)},
 				maxp = {x=ax, z=az, y=math.max(h_max, h_real)},
 				size = 1,
-				volume = ay,
+				volume = h_real,
 				};
 		else
 			-- the surface area is one larger now
 			hole_data[ id ].size   = hole_data[ id ].size   + 1;
 			-- the volume has also grown
-			hole_data[ id ].volume = hole_data[ id ].volume + ay;
+			hole_data[ id ].volume = hole_data[ id ].volume + h_real;
 			if( ax < hole_data[ id ].minp.x ) then
 				hole_data[ id ].minp.x = ax;
 			end
@@ -231,8 +240,7 @@ local identify_individual_holes_or_hills = function( minp, maxp, ax, az, i, chun
 			hole_data[ id ].maxp.x = math.max( ax, hole_data[ id ].maxp.x );
 			hole_data[ id ].minp.z = math.min( az, hole_data[ id ].minp.z );
 			hole_data[ id ].maxp.z = math.max( az, hole_data[ id ].maxp.z );
-			hole_data[ id ].minp.y = math.min( ay, hole_data[ id ].minp.y );
-			hole_data[ id ].maxp.y = math.max( ay, hole_data[ id ].maxp.y );
+			hole_data[ id ].minp.y = math.min( h_real, hole_data[ id ].minp.y );
 		end
 	end
 	return hole_counter;
@@ -263,7 +271,6 @@ local merge_if_same_hole_or_hill = function(hole_data, merge_into)
 			merged[v].minp.z = math.min( merged[v].minp.z, hole_data[k].minp.z );
 			merged[v].maxp.z = math.max( merged[v].maxp.z, hole_data[k].maxp.z );
 			merged[v].minp.y = math.min( merged[v].minp.y, hole_data[k].minp.y );
-			merged[v].maxp.y = math.max( merged[v].maxp.y, hole_data[k].maxp.y );
 		end
 		id2merged[ k ] = id2merged[ v ];
 	end
@@ -487,11 +494,26 @@ minetest.register_on_generated(function(minp, maxp, seed)
 	-- flatten hills, fill holes (just virutal in adjusted_heightmap)
 	local adjusted_heightmap = heightmap_with_hills_lowered_and_holes_filled( minp, maxp, heightmap, extrema, detected);
 
+	-- calculate the actual volume now
+	for k,v in pairs(detected.holes.merged) do
+		-- we did sum up the height at ground level at each point;
+		-- the lake will be between target_height and that ground level
+		v.volume = (v.size * v.target_height) - v.volume;
+		-- what's the maximum depth of this lake?
+		v.depth  = v.target_height - v.minp.y;
+	end
 
 
 	-- for now: fill each hole (no matter how big or tiny) with river water
 	for id, data in pairs( detected.holes.merged ) do
-		detected.holes.merged[id].material = fill_lake_with;
+		local hole = detected.holes.merged[id];
+		detected.holes.merged[id].material = lakes.fill_lake_with;
+		-- skip lakes that do not fit the minimal requirements
+		if( hole.depth  < lakes.min_depth
+		 or hole.size   < lakes.min_surface_area
+		 or hole.volume < lakes.min_volume ) then
+			detected.holes.merged[id].material = nil;
+		end
 	end
 
 	-- show something to the user; change the landscape
@@ -502,10 +524,11 @@ minetest.register_on_generated(function(minp, maxp, seed)
 		i = i+1;
 
 		-- is there a hole?
-		if( detected.holes_markmap[i] and detected.holes_markmap[i]>0) then
+		if(  detected.holes_markmap[i]
+		 and detected.holes_markmap[i]>0
+		 and detected.holes.merged[detected.holes_merge_into[ detected.holes_markmap[i] ]].material) then
 			local id = detected.holes_merge_into[ detected.holes_markmap[i] ];
 			local hole = detected.holes.merged[id];
-
 
 			-- is there a node *above* the future surface of the lake?
 			-- this might be a tree with leaves, fruits and/or snow on it
@@ -526,8 +549,6 @@ minetest.register_on_generated(function(minp, maxp, seed)
 			-- clay is a nice building material; we need more of it!
 			-- thus: turn the ground of the lake into clay
 			minetest.set_node( {x=ax, z=az, y=heightmap[i]}, {name=lakes.ground_material});
-
-			-- is there a node above the *ground*? (most likely a plant)
 			-- this is only of intrest if the node will not be replaced anyway (that is,
 			-- the node is not at the lakes surface)
 			if(heightmap[i] < hole.target_height-1) then
@@ -538,6 +559,18 @@ minetest.register_on_generated(function(minp, maxp, seed)
 			end
 			-- place the fill material at the new surface height of the lake
 			minetest.set_node( {x=ax, z=az, y=hole.target_height}, {name=hole.material});
+
+			--[[
+			-- if a pointable node - i.e. default:glass - is used as
+			-- lakes.fill_lake_with, then this here can be uncommented to
+			-- get debug information about the lake
+			local meta = minetest.get_meta( {x=ax, z=az, y=hole.target_height});
+			meta:set_string("infotext","Lake ID: "..tostring(id).." "..tostring(hole.size)..
+				" m^2; Volume: "..tostring(hole.volume)..
+				" m^3; Max. Depth: "..tostring(hole.depth));
+			--]]
+
+			-- is there a node above the *ground*? (most likely a plant)
 
 			-- waterlilys are decorative
 			if(minetest.registered_nodes["flowers:waterlily"] and math.random(1,20)==1) then
