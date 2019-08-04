@@ -12,6 +12,11 @@ lakes.min_depth = 1
 lakes.min_surface_area = 9
 --   ...with a volume less than this value
 lakes.min_volume = 18
+-- probability of a possible lake actually beeing generated in percent
+-- (depends on mapgen how many chances there are)
+-- if set to 100: generate as many lakes as possible
+-- if set to 0: generate no lakes
+lakes.lake_chance = 100
 
 -- plant these plants around lakes
 lakes.plants_around_lakes = {
@@ -512,6 +517,10 @@ minetest.register_on_generated(function(minp, maxp, seed)
 		if( hole.depth  < lakes.min_depth
 		 or hole.size   < lakes.min_surface_area
 		 or hole.volume < lakes.min_volume ) then
+			detected.holes.merged[id].material = nil;
+		end
+		-- skip lakes because less lakes are wanted
+		if( lakes.lake_chance < 100 and lakes.lake_chance < math.random(0, 100)) then
 			detected.holes.merged[id].material = nil;
 		end
 	end
